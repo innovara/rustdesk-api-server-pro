@@ -6,6 +6,7 @@ name: Docker build
 # - A tag starting with "v" is created
 # - A pull request is created or updated
 on:
+  workflow_call:
   workflow_dispatch:
   # This creates an environment variable called `IMAGE_NAME ` with the value `ghtoken_product_demo`.
 env:
