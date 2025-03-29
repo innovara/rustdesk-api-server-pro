@@ -1,0 +1,84 @@
+name: Daily upstream rebase
+on:
+  schedule:
+  - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream:
+        description: <user>/<repo> or the full HTTP URL
+        required: false
+      branch:
+        description: The upstream branch that is rebased on
+        required: false
+        default:  master
+      depth:
+        description: Greater than the number of commits the upstream made in a period
+        required: false
+        default:  100
+      push:
+        description: Do the force push in this action
+        required: false
+        default:  true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+      with:
+        fetch-depth: 50  # greater than the number of commits you made
+        persist-credentials: false
+    - shell: bash
+      env:
+        WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      run: |
+        set -ex;
+
+        ORIGIN_URL=$(git remote get-url origin);
+        UPSTREAM=${{ inputs.upstream }};
+
+        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com";
+        git config --local user.name  "GitHub Actions";
+
+        echo $WORKFLOW_TOKEN | gh auth login --with-token;
+
+        if [ -z $UPSTREAM ]; then
+            UPSTREAM=$(gh api repos/:owner/:repo --jq .parent.full_name);
+            if [ -z $UPSTREAM ]; then echo "Can't find upstream" >&2 && exit 1; fi;
+        fi;
+        if [ ! $(echo $UPSTREAM | egrep '^(http|git@)') ]; then
+            UPSTREAM=https://github.com/$UPSTREAM.git
+        fi;
+        if [ ${{ inputs.depth || 100 }} -ne 0 ]; then
+            DEPTH=--depth=${{ inputs.depth || 100 }}
+        fi;
+
+        git remote add upstream $UPSTREAM;
+
+        git fetch upstream ${{ inputs.branch || 'master' }} $DEPTH;
+
+        git rebase upstream/master && conflict=$? || conflict=$?;
+        while [ "$conflict" -gt 0 ]; do
+          git rebase --skip && conflict=$? || conflict=$?;
+        done;
+
+        if [ "${{ inputs.push || true }}" = "true" -a "$(git status | grep diverged)" ]; then
+            git push "${ORIGIN_URL/https:\/\//https:\/\/$WORKFLOW_TOKEN@}" $(git branch --show-current) --force;
+        fi;
+
+        git submodule sync --recursive;
+        git submodule update --init --recursive --remote --force;
+
+        if [ "${{ inputs.push || true }}" = "true" -a "$(git status --porcelain)" ]; then
+            git commit -a -m "Update submodules" -m "[skip ci]";
+            git push "${ORIGIN_URL/https:\/\//https:\/\/$WORKFLOW_TOKEN@}" $(git branch --show-current) --force;
+        fi;
+  delete-old-actions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: yanovation/delete-old-actions@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          days-ago: 30
+          dry-run: false
